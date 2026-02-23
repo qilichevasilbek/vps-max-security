@@ -1,0 +1,200 @@
+#!/bin/bash
+#=====================================================================
+# vps-max-security — Ubuntu VPS Security Hardening Toolkit
+# https://github.com/qilichevasilbek/vps-max-security
+#=====================================================================
+
+set -euo pipefail
+
+# Resolve install directory
+VMS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+export VMS_DIR
+
+# Source libraries
+# shellcheck disable=SC1091
+source "${VMS_DIR}/lib/core.sh"
+# shellcheck disable=SC1091
+source "${VMS_DIR}/lib/config.sh"
+# shellcheck disable=SC1091
+source "${VMS_DIR}/lib/ui.sh"
+# shellcheck disable=SC1091
+source "${VMS_DIR}/lib/module_loader.sh"
+# shellcheck disable=SC1091
+source "${VMS_DIR}/lib/wizard.sh"
+# shellcheck disable=SC1091
+source "${VMS_DIR}/lib/audit_engine.sh"
+
+# ── CLI flags ────────────────────────────────────────────
+DRY_RUN="false"
+NO_WIZARD="false"
+ONLY_MODULES=""
+SKIP_MODULES=""
+COMMAND=""
+
+usage() {
+    cat << EOF
+vps-max-security v${VMS_VERSION} — Ubuntu VPS Security Hardening Toolkit
+
+Usage:
+  vps-max-security [OPTIONS]         Interactive wizard + apply all modules
+  vps-max-security audit             Score-based security audit (0-100)
+  vps-max-security status            Show which modules applied, last run
+  vps-max-security update            Update tool via git pull
+  vps-max-security rollback          Restore from latest backup
+
+Options:
+  --dry-run                Show what would change, apply nothing
+  --no-wizard              Skip wizard, use existing config
+  --only <modules>         Run specific modules (comma-separated)
+  --skip <modules>         Skip specific modules (comma-separated)
+  --version                Show version
+  --help                   Show this help
+
+Module names (use with --only/--skip):
+  system-update, auto-updates, ssh-hardening, firewall, fail2ban,
+  kernel-hardening, apparmor, file-integrity, rootkit-scanners,
+  shared-memory, file-permissions, audit-daemon, dns-security, lynis,
+  service-cleanup, login-security, dheat-mitigation, usb-hardening,
+  cve-patches, log-protection
+
+Examples:
+  sudo vps-max-security                            # Full wizard + apply
+  sudo vps-max-security --dry-run                  # Preview changes
+  sudo vps-max-security --only ssh-hardening,firewall
+  sudo vps-max-security --skip system-update
+  sudo vps-max-security audit                      # Security score
+EOF
+}
+
+# ── Parse arguments ──────────────────────────────────────
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        audit|status|update|rollback)
+            COMMAND="$1"
+            shift
+            ;;
+        --dry-run)
+            DRY_RUN="true"
+            shift
+            ;;
+        --no-wizard)
+            NO_WIZARD="true"
+            shift
+            ;;
+        --only)
+            ONLY_MODULES="$2"
+            shift 2
+            ;;
+        --skip)
+            SKIP_MODULES="$2"
+            shift 2
+            ;;
+        --version|-v)
+            echo "vps-max-security v${VMS_VERSION}"
+            exit 0
+            ;;
+        --help|-h)
+            usage
+            exit 0
+            ;;
+        *)
+            log_error "Unknown option: $1"
+            usage
+            exit 1
+            ;;
+    esac
+done
+
+export DRY_RUN ONLY_MODULES SKIP_MODULES
+
+# ── Command router ───────────────────────────────────────
+
+cmd_apply() {
+    require_root
+    require_ubuntu
+    init_dirs
+
+    config_load
+
+    if [[ "${NO_WIZARD}" != "true" ]]; then
+        wizard_run
+    else
+        config_validate || exit 1
+        config_compute
+    fi
+
+    # Pre-flight checks
+    require_user_exists "${ADMIN_USER}"
+    require_ssh_keys "${ADMIN_USER}"
+
+    log_warn "This will make significant security changes."
+    log_warn "KEEP YOUR CURRENT SSH SESSION OPEN!"
+
+    if [[ "${NO_WIZARD}" == "true" ]]; then
+        if ! ui_confirm "Continue with hardening?"; then
+            echo "Aborted."
+            exit 0
+        fi
+    fi
+
+    module_run_all
+
+    if [[ "${DRY_RUN}" != "true" ]]; then
+        ui_complete
+    fi
+}
+
+cmd_audit() {
+    require_root
+    init_dirs
+    config_load
+    config_compute
+    audit_run
+}
+
+cmd_status() {
+    require_root
+    init_dirs
+
+    ui_banner "VPS MAX SECURITY — Status"
+    echo -e "  Version:  ${VMS_VERSION}"
+    echo -e "  Config:   ${VMS_CONFIG_FILE}"
+    echo -e "  Log:      ${VMS_LOG_FILE}"
+    echo ""
+
+    state_list
+}
+
+cmd_update() {
+    require_root
+    if [[ -d "${VMS_DIR}/.git" ]]; then
+        log_info "Updating vps-max-security..."
+        git -C "${VMS_DIR}" pull --ff-only
+        log_success "Updated to $(cat "${VMS_DIR}/VERSION")"
+    else
+        log_error "Not a git installation. Re-install from GitHub."
+        exit 1
+    fi
+}
+
+cmd_rollback() {
+    require_root
+    init_dirs
+
+    log_warn "This will restore all modified files from backups."
+    if ! ui_confirm "Continue with rollback?"; then
+        echo "Aborted."
+        exit 0
+    fi
+    rollback_all
+}
+
+# ── Main ─────────────────────────────────────────────────
+
+case "${COMMAND}" in
+    audit)    cmd_audit ;;
+    status)   cmd_status ;;
+    update)   cmd_update ;;
+    rollback) cmd_rollback ;;
+    *)        cmd_apply ;;
+esac
