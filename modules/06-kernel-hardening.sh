@@ -38,5 +38,6 @@ audit_kernel_hardening() {
     [[ "$(sysctl -n kernel.kptr_restrict 2>/dev/null)" == "2" ]] && \
     [[ "$(sysctl -n net.ipv4.tcp_syncookies 2>/dev/null)" == "1" ]] && \
     [[ "$(sysctl -n kernel.randomize_va_space 2>/dev/null)" == "2" ]] && \
-    [[ "$(sysctl -n net.ipv4.conf.all.rp_filter 2>/dev/null)" == "1" ]]
+    [[ "$(sysctl -n net.ipv4.conf.all.rp_filter 2>/dev/null)" == "1" ]] && \
+    [[ "$(sysctl -n kernel.yama.ptrace_scope 2>/dev/null)" -ge "1" ]]
 }
