@@ -11,10 +11,10 @@ apply_system_update() {
     apt update -y
 
     log_step "Upgrading packages..."
-    apt upgrade -y
+    apt upgrade -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold"
 
     log_step "Running dist-upgrade..."
-    apt dist-upgrade -y
+    apt dist-upgrade -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold"
 
     log_step "Removing unused packages..."
     apt autoremove -y

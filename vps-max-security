@@ -6,6 +6,8 @@
 
 set -euo pipefail
 
+export DEBIAN_FRONTEND=noninteractive
+
 # Resolve install directory
 VMS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 export VMS_DIR
@@ -23,6 +25,16 @@ source "${VMS_DIR}/lib/module_loader.sh"
 source "${VMS_DIR}/lib/wizard.sh"
 # shellcheck disable=SC1091
 source "${VMS_DIR}/lib/audit_engine.sh"
+# shellcheck disable=SC1091
+source "${VMS_DIR}/lib/bootstrap.sh"
+
+cleanup_trap() {
+    echo ""
+    log_warn "Interrupted! Some changes may have been partially applied."
+    log_warn "Run 'sudo vps-max-security rollback' to undo changes."
+    exit 130
+}
+trap cleanup_trap INT TERM
 
 # ── CLI flags ────────────────────────────────────────────
 DRY_RUN="false"
@@ -82,10 +94,18 @@ while [[ $# -gt 0 ]]; do
             shift
             ;;
         --only)
+            if [[ $# -lt 2 || "${2:-}" == --* ]]; then
+                log_error "--only requires a comma-separated list of modules"
+                exit 1
+            fi
             ONLY_MODULES="$2"
             shift 2
             ;;
         --skip)
+            if [[ $# -lt 2 || "${2:-}" == --* ]]; then
+                log_error "--skip requires a comma-separated list of modules"
+                exit 1
+            fi
             SKIP_MODULES="$2"
             shift 2
             ;;
@@ -97,6 +117,10 @@ while [[ $# -gt 0 ]]; do
             usage
             exit 0
             ;;
+        --)
+            shift
+            break
+            ;;
         *)
             log_error "Unknown option: $1"
             usage
@@ -104,6 +128,11 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
+
+if [[ -n "${ONLY_MODULES}" && -n "${SKIP_MODULES}" ]]; then
+    log_error "--only and --skip cannot be used together"
+    exit 1
+fi
 
 export DRY_RUN ONLY_MODULES SKIP_MODULES
 
@@ -117,13 +146,19 @@ cmd_apply() {
     config_load
 
     if [[ "${NO_WIZARD}" != "true" ]]; then
-        wizard_run
+        wizard_run || exit 1
     else
         config_validate || exit 1
         config_compute
     fi
 
-    # Pre-flight checks
+    # Pre-flight: if admin user is missing or has no SSH keys, run bootstrap.
+    # This handles the "just bought a VPS, only have root" scenario.
+    if bootstrap_needed "${ADMIN_USER}"; then
+        bootstrap_run || exit 1
+    fi
+
+    # Final verification (after bootstrap or on subsequent runs)
     require_user_exists "${ADMIN_USER}"
     require_ssh_keys "${ADMIN_USER}"
 

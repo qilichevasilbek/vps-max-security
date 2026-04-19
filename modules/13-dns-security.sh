@@ -5,7 +5,7 @@
 
 check_dns_security() {
     [[ -f /etc/systemd/resolved.conf ]] && \
-    grep -q "^DNS=" /etc/systemd/resolved.conf 2>/dev/null && \
+    grep -q "^DNS=${DNS_PRIMARY}" /etc/systemd/resolved.conf 2>/dev/null && \
     grep -q "DNSOverTLS=opportunistic" /etc/systemd/resolved.conf 2>/dev/null
 }
 

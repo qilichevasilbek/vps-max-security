@@ -4,7 +4,8 @@
 check_login_security() {
     [[ -f /etc/security/pwquality.conf ]] && \
     grep -q "minlen" /etc/security/pwquality.conf 2>/dev/null && \
-    dpkg -l libpam-pwquality &>/dev/null
+    dpkg -s libpam-pwquality &>/dev/null && \
+    grep -q "^PASS_MAX_DAYS.*365" /etc/login.defs 2>/dev/null
 }
 
 apply_login_security() {
@@ -42,5 +43,5 @@ EOF
 audit_login_security() {
     [[ -f /etc/security/pwquality.conf ]] && \
     grep -q "minlen" /etc/security/pwquality.conf 2>/dev/null && \
-    dpkg -l libpam-pwquality &>/dev/null
+    dpkg -s libpam-pwquality &>/dev/null
 }

@@ -80,8 +80,8 @@ require_ubuntu() {
         log_error "Cannot detect OS. /etc/os-release not found."
         exit 1
     fi
-    # shellcheck disable=SC1091
-    source /etc/os-release
+    local ID="" VERSION_ID="" PRETTY_NAME=""
+    eval "$(grep -E '^(ID|VERSION_ID|PRETTY_NAME)=' /etc/os-release)"
     if [[ "${ID}" != "ubuntu" ]]; then
         log_error "This tool is designed for Ubuntu. Detected: ${ID}"
         exit 1
@@ -102,7 +102,10 @@ require_user_exists() {
 
 require_ssh_keys() {
     local user="$1"
-    local keyfile="/home/${user}/.ssh/authorized_keys"
+    local home_dir
+    home_dir="$(getent passwd "${user}" | cut -d: -f6)"
+    home_dir="${home_dir:-/home/${user}}"
+    local keyfile="${home_dir}/.ssh/authorized_keys"
     if [[ ! -f "${keyfile}" ]] || [[ ! -s "${keyfile}" ]]; then
         log_error "No SSH keys found for '${user}'. Set up key auth first:"
         echo "  ssh-copy-id -i ~/.ssh/id_ed25519.pub ${user}@YOUR_VPS_IP"
@@ -115,6 +118,8 @@ require_ssh_keys() {
 init_dirs() {
     mkdir -p "${VMS_CONFIG_DIR}" "${VMS_BACKUP_DIR}"
     touch "${VMS_LOG_FILE}" "${VMS_STATE_FILE}"
+    chmod 700 "${VMS_CONFIG_DIR}" "${VMS_BACKUP_DIR}"
+    chmod 600 "${VMS_LOG_FILE}" "${VMS_STATE_FILE}"
 }
 
 # ── Backup / Restore ─────────────────────────────────────
@@ -132,15 +137,22 @@ backup_file() {
         return 0
     fi
     cp -a "${file}" "${dest}"
+    echo "${dest}|${file}" >> "${VMS_BACKUP_DIR}/.mapping"
     log_step "Backed up ${file}"
 }
 
 restore_latest() {
     local file="$1"
     local pattern="${VMS_BACKUP_DIR}/${file//\//_}_*"
+    local -a matches=()
     # shellcheck disable=SC2086
-    local latest
-    latest="$(ls -t ${pattern} 2>/dev/null | head -1)"
+    for f in ${pattern}; do
+        [[ -f "${f}" ]] && matches+=("${f}")
+    done
+    local latest=""
+    if (( ${#matches[@]} > 0 )); then
+        latest="$(ls -t "${matches[@]}" | head -1)"
+    fi
     if [[ -z "${latest}" ]]; then
         log_error "No backup found for ${file}"
         return 1
@@ -158,9 +170,15 @@ rollback_all() {
         local basename
         basename="$(basename "${backup}")"
         # Strip timestamp suffix: _YYYYMMDD-HHMMSS
-        local original
-        original="${basename%_[0-9]*-[0-9]*}"
-        original="${original//_/\/}"
+        local original=""
+        if [[ -f "${VMS_BACKUP_DIR}/.mapping" ]]; then
+            original="$(grep "^${backup}|" "${VMS_BACKUP_DIR}/.mapping" 2>/dev/null | tail -1 | cut -d'|' -f2)"
+        fi
+        if [[ -z "${original}" ]]; then
+            # Fallback for backups without mapping (legacy)
+            original="${basename%_[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]-[0-9][0-9][0-9][0-9][0-9][0-9]}"
+            original="${original//_/\/}"
+        fi
         # Only restore the latest backup per original file
         if [[ "${restored_files}" == *"|${original}|"* ]]; then
             continue
@@ -186,15 +204,19 @@ safe_write() {
         return 0
     fi
     local new_hash old_hash=""
-    new_hash="$(echo "${content}" | sha256sum | awk '{print $1}')"
+    new_hash="$(printf '%s\n' "${content}" | sha256sum | awk '{print $1}')"
     if [[ -f "${dest}" ]]; then
         old_hash="$(sha256sum "${dest}" | awk '{print $1}')"
     fi
     if [[ "${new_hash}" == "${old_hash}" ]]; then
         return 1  # No change needed
     fi
+    if [[ -L "${dest}" ]]; then
+        log_error "Refusing to write to symlink: ${dest}"
+        return 1
+    fi
     backup_file "${dest}"
-    echo "${content}" > "${dest}"
+    printf '%s\n' "${content}" > "${dest}"
     return 0
 }
 
@@ -219,8 +241,12 @@ state_set() {
     # Remove old entry for this module
     if [[ -f "${VMS_STATE_FILE}" ]]; then
         local tmp
-        tmp="$(grep -v "^${module}|" "${VMS_STATE_FILE}" 2>/dev/null || true)"
-        echo "${tmp}" > "${VMS_STATE_FILE}"
+        tmp="$(grep -Fv "${module}|" "${VMS_STATE_FILE}" 2>/dev/null | grep -v '^$' || true)"
+        if [[ -n "${tmp}" ]]; then
+            printf '%s\n' "${tmp}" > "${VMS_STATE_FILE}"
+        else
+            : > "${VMS_STATE_FILE}"
+        fi
     fi
     echo "${module}|${status}|${ts}" >> "${VMS_STATE_FILE}"
 }

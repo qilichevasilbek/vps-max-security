@@ -2,13 +2,13 @@
 # Module 09: Rootkit scanners (rkhunter + chkrootkit)
 
 check_rootkit_scanners() {
-    dpkg -l rkhunter &>/dev/null && \
-    dpkg -l chkrootkit &>/dev/null
+    dpkg -s rkhunter &>/dev/null && \
+    dpkg -s chkrootkit &>/dev/null
 }
 
 apply_rootkit_scanners() {
     log_step "Installing rkhunter and chkrootkit..."
-    apt install rkhunter chkrootkit -y
+    apt install --no-install-recommends rkhunter chkrootkit -y
 
     log_step "Updating rkhunter signatures..."
     rkhunter --update 2>/dev/null || true
@@ -17,6 +17,6 @@ apply_rootkit_scanners() {
 }
 
 audit_rootkit_scanners() {
-    dpkg -l rkhunter &>/dev/null && \
-    dpkg -l chkrootkit &>/dev/null
+    dpkg -s rkhunter &>/dev/null && \
+    dpkg -s chkrootkit &>/dev/null
 }

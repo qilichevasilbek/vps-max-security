@@ -121,7 +121,35 @@ module_run() {
 module_run_all() {
     local applied=0 skipped=0 failed=0
     local total
-    total="$(module_list_all | wc -l | tr -d ' ')"
+
+    # Validate --only/--skip module names
+    if [[ -n "${ONLY_MODULES:-}" || -n "${SKIP_MODULES:-}" ]]; then
+        local filter_list="${ONLY_MODULES:-}${SKIP_MODULES:-}"
+        local all_names=""
+        while IFS= read -r _f; do
+            all_names="${all_names},$(module_name_from_file "$_f")"
+        done < <(module_list_all)
+        IFS=',' read -ra _filter_names <<< "${filter_list}"
+        for _fn in "${_filter_names[@]}"; do
+            [[ -z "${_fn}" ]] && continue
+            if [[ ",${all_names}," != *",${_fn},"* ]]; then
+                log_warn "Unknown module name: ${_fn}"
+            fi
+        done
+    fi
+
+    local total_all
+    total_all="$(module_list_all | wc -l | tr -d ' ')"
+    total="${total_all}"
+    if [[ -n "${ONLY_MODULES:-}" || -n "${SKIP_MODULES:-}" ]]; then
+        local filtered=0
+        while IFS= read -r _mf; do
+            local _mn
+            _mn="$(module_name_from_file "$_mf")"
+            module_should_run "${_mn}" && ((filtered++)) || true
+        done < <(module_list_all)
+        total="${filtered}"
+    fi
 
     log_info "Running ${total} hardening modules..."
 
@@ -133,8 +161,8 @@ module_run_all() {
             local mstate
             mstate="$(state_get "${name}")"
             case "${mstate}" in
-                *applied*) ((applied++)) ;;
-                *skipped*) ((skipped++)) ;;
+                *applied*) ((applied++)) || true ;;
+                *skipped*) ((skipped++)) || true ;;
             esac
         else
             ((failed++)) || true
@@ -159,9 +187,11 @@ module_audit_all() {
         source "${file}"
 
         if type "audit_${func}" &>/dev/null; then
-            local score
-            score="$("audit_${func}" 2>/dev/null)"
-            echo "${name}|${score}"
+            if "audit_${func}" 2>/dev/null; then
+                echo "${name}|pass"
+            else
+                echo "${name}|fail"
+            fi
         fi
     done < <(module_list_all)
 }

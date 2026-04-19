@@ -24,6 +24,14 @@ check_service_cleanup() {
             break
         fi
     done
+    if [[ "${found}" == "false" ]]; then
+        for pkg in "${UNNECESSARY_PACKAGES[@]}"; do
+            if dpkg -s "${pkg}" &>/dev/null 2>&1; then
+                found=true
+                break
+            fi
+        done
+    fi
     [[ "${found}" == "false" ]]
 }
 
@@ -38,7 +46,7 @@ apply_service_cleanup() {
 
     log_step "Removing insecure packages..."
     for pkg in "${UNNECESSARY_PACKAGES[@]}"; do
-        if dpkg -l "${pkg}" &>/dev/null 2>&1; then
+        if dpkg -s "${pkg}" &>/dev/null 2>&1; then
             apt purge "${pkg}" -y 2>/dev/null || true
             log_step "Removed ${pkg}"
         fi

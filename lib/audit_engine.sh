@@ -1,7 +1,7 @@
 #!/bin/bash
 # audit_engine.sh — Security audit scoring framework (0-100)
 
-# Weights for each module category (must sum to 100)
+# Weights for each module category (weights are relative, higher = more important)
 # Using a function for bash 3 compatibility (macOS testing)
 _audit_weight() {
     case "$1" in
@@ -53,9 +53,8 @@ audit_run() {
         local weight_key="${name//-/_}"
         local weight
         weight="$(_audit_weight "${weight_key}")"
-        ((max_score += weight)) || true
-
         if type "audit_${func}" &>/dev/null; then
+            ((max_score += weight)) || true
             local pass=0
             if "audit_${func}" 2>/dev/null; then
                 pass="${weight}"

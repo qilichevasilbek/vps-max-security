@@ -2,10 +2,11 @@
 # Module 20: Log protection (immutable logs + rotation)
 
 check_log_protection() {
-    # Check if auth.log has immutable attribute
     local attrs
     attrs="$(lsattr /var/log/auth.log 2>/dev/null | awk '{print $1}')"
-    [[ "${attrs}" == *"a"* ]]
+    [[ "${attrs}" == *"a"* ]] && \
+    [[ "$(lsattr /var/log/syslog 2>/dev/null | awk '{print $1}')" == *"a"* ]] && \
+    [[ -f /etc/logrotate.d/vps-security ]]
 }
 
 apply_log_protection() {
@@ -15,8 +16,8 @@ apply_log_protection() {
     chattr -a /var/log/auth.log 2>/dev/null || true
     chattr -a /var/log/syslog 2>/dev/null || true
 
-    chattr +a /var/log/auth.log 2>/dev/null || true
-    chattr +a /var/log/syslog 2>/dev/null || true
+    chattr +a /var/log/auth.log 2>/dev/null || log_warn "chattr not supported on auth.log filesystem"
+    chattr +a /var/log/syslog 2>/dev/null || log_warn "chattr not supported on syslog filesystem"
 
     log_step "Configuring log rotation for security logs..."
     if [[ ! -f /etc/logrotate.d/vps-security ]]; then

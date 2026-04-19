@@ -15,12 +15,31 @@ apply_ssh_hardening() {
     backup_file "/etc/ssh/sshd_config"
     backup_file "/etc/ssh/sshd_config.d/hardening.conf"
 
+    # Detect OpenSSH version — mlkem768x25519-sha256 (default PQ KEX) requires 9.9+.
+    # sshd will silently drop unknown algorithms from the KEX list, so the config
+    # remains valid on older versions — this is only an advisory warning.
+    local ssh_ver
+    ssh_ver="$(sshd -V 2>&1 | grep -oE 'OpenSSH_[0-9]+\.[0-9]+' | head -1 | sed 's/OpenSSH_//')"
+    if [[ -n "${ssh_ver}" ]]; then
+        local ssh_major ssh_minor
+        ssh_major="${ssh_ver%%.*}"
+        ssh_minor="${ssh_ver##*.}"
+        if (( ssh_major < 9 || (ssh_major == 9 && ssh_minor < 9) )); then
+            log_warn "OpenSSH ${ssh_ver} detected — post-quantum mlkem768x25519-sha256 requires 9.9+."
+            log_warn "Config will still apply; for full PQ protection install from ppa:openssh/ppa or noble-backports."
+        fi
+    fi
+
+    local VMS_ADDRESS_FAMILY="inet"
+    [[ "${ENABLE_IPV6}" == "true" ]] && VMS_ADDRESS_FAMILY="any"
+
     log_step "Writing hardened sshd_config..."
     cat > /etc/ssh/sshd_config << SSHEOF
+Include /etc/ssh/sshd_config.d/*.conf
 # === VPS Max Security — Hardened SSH Config ===
 # Generated: $(date +%F)
 Port ${SSH_PORT}
-AddressFamily inet
+AddressFamily ${VMS_ADDRESS_FAMILY}
 ListenAddress 0.0.0.0
 
 HostKey /etc/ssh/ssh_host_ed25519_key
@@ -65,12 +84,16 @@ SSHEOF
 
     log_step "Removing weak DH moduli..."
     if [[ -f /etc/ssh/moduli ]]; then
+        backup_file "/etc/ssh/moduli"
         awk '$5 >= 3071' /etc/ssh/moduli > /etc/ssh/moduli.safe
         mv -f /etc/ssh/moduli.safe /etc/ssh/moduli
     fi
 
     log_step "Setting login banner..."
+    backup_file "/etc/issue.net"
     cp "${VMS_DIR}/configs/issue.net" /etc/issue.net
+
+    chmod 600 /etc/ssh/sshd_config
 
     log_step "Validating SSH config..."
     if sshd -t; then
@@ -83,8 +106,6 @@ SSHEOF
         systemctl restart ssh
         return 1
     fi
-
-    chmod 600 /etc/ssh/sshd_config
     log_success "SSH hardened"
 }
 
@@ -94,5 +115,7 @@ audit_ssh_hardening() {
     grep -q "^PasswordAuthentication no$" /etc/ssh/sshd_config 2>/dev/null && \
     grep -q "^X11Forwarding no$" /etc/ssh/sshd_config 2>/dev/null && \
     [[ -f /etc/ssh/sshd_config.d/hardening.conf ]] && \
-    grep -q "sntrup761" /etc/ssh/sshd_config.d/hardening.conf 2>/dev/null
+    # Either ML-KEM (PQ, OpenSSH 9.9+) or NTRU Prime (OpenSSH 9.0+) qualifies
+    grep -qE "mlkem768|sntrup761" /etc/ssh/sshd_config.d/hardening.conf 2>/dev/null
+    # Tip: validate externally with `ssh-audit localhost -p <SSH_PORT>`
 }

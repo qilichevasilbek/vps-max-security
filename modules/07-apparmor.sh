@@ -2,9 +2,10 @@
 # Module 07: AppArmor enforcement
 
 check_apparmor() {
-    dpkg -l apparmor-utils &>/dev/null && \
+    dpkg -s apparmor-utils &>/dev/null && \
     aa-status &>/dev/null && \
-    [[ "$(aa-status 2>/dev/null | grep -c 'enforce')" -gt 0 ]]
+    [[ "$(aa-status 2>/dev/null | grep -c 'enforce')" -gt 0 ]] && \
+    [[ "$(aa-status 2>/dev/null | grep -c 'complain')" -eq 0 ]]
 }
 
 apply_apparmor() {

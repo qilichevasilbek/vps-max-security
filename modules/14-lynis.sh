@@ -2,7 +2,7 @@
 # Module 14: Install Lynis security auditor
 
 check_lynis() {
-    dpkg -l lynis &>/dev/null
+    dpkg -s lynis &>/dev/null
 }
 
 apply_lynis() {
@@ -13,5 +13,5 @@ apply_lynis() {
 }
 
 audit_lynis() {
-    dpkg -l lynis &>/dev/null
+    dpkg -s lynis &>/dev/null
 }

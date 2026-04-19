@@ -5,7 +5,8 @@ check_file_permissions() {
     local crontab_perm
     crontab_perm="$(stat -c '%a' /etc/crontab 2>/dev/null)"
     [[ "${crontab_perm}" == "700" ]] && \
-    [[ "$(stat -c '%a' /etc/ssh/sshd_config 2>/dev/null)" == "600" ]]
+    [[ "$(stat -c '%a' /etc/ssh/sshd_config 2>/dev/null)" == "600" ]] && \
+    grep -q "umask 027" /etc/profile 2>/dev/null
 }
 
 apply_file_permissions() {

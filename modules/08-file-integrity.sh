@@ -2,7 +2,7 @@
 # Module 08: File integrity monitoring (AIDE)
 
 check_file_integrity() {
-    dpkg -l aide &>/dev/null && \
+    dpkg -s aide &>/dev/null && \
     [[ -f /var/lib/aide/aide.db ]]
 }
 
@@ -11,7 +11,9 @@ apply_file_integrity() {
     apt install aide -y
 
     log_step "Initializing AIDE database (this may take a few minutes)..."
-    aideinit 2>/dev/null || true
+    if ! aideinit 2>/dev/null; then
+        log_warn "aideinit reported errors, database may be incomplete"
+    fi
 
     if [[ -f /var/lib/aide/aide.db.new ]]; then
         cp /var/lib/aide/aide.db.new /var/lib/aide/aide.db
@@ -21,6 +23,6 @@ apply_file_integrity() {
 }
 
 audit_file_integrity() {
-    dpkg -l aide &>/dev/null && \
+    dpkg -s aide &>/dev/null && \
     [[ -f /var/lib/aide/aide.db ]]
 }

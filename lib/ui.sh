@@ -64,17 +64,26 @@ ui_section() {
 
 # Display a summary table of configuration
 ui_config_summary() {
+    local profile_label="${PROFILE:-web}"
+    case "${profile_label}" in
+        web)      profile_label="Web Server" ;;
+        realtime) profile_label="Web + Realtime" ;;
+        custom)   profile_label="Custom" ;;
+    esac
+
+    local docker_label="No"
+    [[ "${DOCKER_DETECTED:-false}" == "true" ]] && docker_label="Yes (auto)"
+
     echo ""
     echo -e "${BOLD}┌──────────────────────────────────────────────┐${NC}"
     echo -e "${BOLD}│           Configuration Summary               │${NC}"
     echo -e "${BOLD}├──────────────────────┬───────────────────────┤${NC}"
+    printf "${BOLD}│${NC} %-20s ${BOLD}│${NC} %-21s ${BOLD}│${NC}\n" "Profile" "${profile_label}"
     printf "${BOLD}│${NC} %-20s ${BOLD}│${NC} %-21s ${BOLD}│${NC}\n" "SSH Port" "${SSH_PORT}"
     printf "${BOLD}│${NC} %-20s ${BOLD}│${NC} %-21s ${BOLD}│${NC}\n" "Admin User" "${ADMIN_USER}"
-    printf "${BOLD}│${NC} %-20s ${BOLD}│${NC} %-21s ${BOLD}│${NC}\n" "IPv6 Enabled" "${ENABLE_IPV6}"
-    printf "${BOLD}│${NC} %-20s ${BOLD}│${NC} %-21s ${BOLD}│${NC}\n" "Firewall Ports" "${FIREWALL_PORTS}"
-    printf "${BOLD}│${NC} %-20s ${BOLD}│${NC} %-21s ${BOLD}│${NC}\n" "Max SSH Retries" "${MAX_SSH_RETRIES}"
-    printf "${BOLD}│${NC} %-20s ${BOLD}│${NC} %-21s ${BOLD}│${NC}\n" "Ban Duration" "${BAN_DURATION_HOURS}h"
-    printf "${BOLD}│${NC} %-20s ${BOLD}│${NC} %-21s ${BOLD}│${NC}\n" "DNS Provider" "${DNS_PROVIDER}"
+    printf "${BOLD}│${NC} %-20s ${BOLD}│${NC} %-21s ${BOLD}│${NC}\n" "Public TCP" "${PUBLIC_TCP_PORTS:-80,443}"
+    printf "${BOLD}│${NC} %-20s ${BOLD}│${NC} %-21s ${BOLD}│${NC}\n" "Public UDP" "${PUBLIC_UDP_PORTS:-(none)}"
+    printf "${BOLD}│${NC} %-20s ${BOLD}│${NC} %-21s ${BOLD}│${NC}\n" "Docker Firewall" "${docker_label}"
     echo -e "${BOLD}└──────────────────────┴───────────────────────┘${NC}"
     echo ""
 }
@@ -84,7 +93,7 @@ ui_confirm() {
     local msg="${1:-Apply these settings?}"
     local answer
     read -rp "  ${msg} (yes/no): " answer
-    [[ "${answer}" == "yes" ]]
+    [[ "${answer}" =~ ^[Yy]([Ee][Ss])?$ ]]
 }
 
 # Progress indicator for module execution
@@ -105,6 +114,10 @@ ui_module_result() {
 
 # Final summary
 ui_complete() {
+    local vps_ip
+    vps_ip="$(hostname -I 2>/dev/null | awk '{print $1}')"
+    vps_ip="${vps_ip:-YOUR_VPS_IP}"
+
     echo ""
     echo -e "${BOLD}══════════════════════════════════════════════════${NC}"
     echo -e "${GREEN}${BOLD}  HARDENING COMPLETE!${NC}"
@@ -112,18 +125,26 @@ ui_complete() {
     echo ""
     echo "  SSH Port:      ${SSH_PORT}"
     echo "  Admin User:    ${ADMIN_USER}"
-    echo "  Firewall:      UFW enabled (ports ${SSH_PORT}, ${FIREWALL_PORTS})"
+    echo "  Firewall:      UFW + DOCKER-USER (TCP: ${PUBLIC_TCP_PORTS:-80,443})"
+    if [[ -n "${PUBLIC_UDP_PORTS:-}" ]]; then
+        echo "                 UDP: ${PUBLIC_UDP_PORTS}"
+    fi
     echo "  Fail2Ban:      Active (${MAX_SSH_RETRIES} retries, ${BAN_DURATION_HOURS}h ban)"
     echo ""
     echo -e "${YELLOW}  NEXT STEPS:${NC}"
-    echo "  1. TEST SSH login in a NEW terminal:"
-    echo "     ssh -p ${SSH_PORT} -i ~/.ssh/id_ed25519 ${ADMIN_USER}@YOUR_VPS_IP"
+    echo ""
+    echo "  1. TEST SSH in a NEW terminal (keep this one open!):"
+    echo "     ssh -p ${SSH_PORT} ${ADMIN_USER}@${vps_ip}"
     echo ""
     echo "  2. Run a security audit:"
     echo "     sudo vps-max-security audit"
     echo ""
     echo "  3. REBOOT to apply all kernel changes:"
     echo "     sudo reboot"
+    echo ""
+    echo -e "  ${DIM}Config: /etc/vps-max-security/config.conf${NC}"
+    echo -e "  ${DIM}Logs:   /etc/vps-max-security/hardening.log${NC}"
+    echo -e "  ${DIM}Undo:   sudo vps-max-security rollback${NC}"
     echo ""
     echo -e "${RED}  DO NOT close this session until you verify login works!${NC}"
     echo -e "${BOLD}══════════════════════════════════════════════════${NC}"
