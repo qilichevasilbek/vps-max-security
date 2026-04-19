@@ -8,8 +8,8 @@ set -euo pipefail
 
 export DEBIAN_FRONTEND=noninteractive
 
-# Resolve install directory
-VMS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Resolve install directory (follow symlink at /usr/local/bin/vps-max-security)
+VMS_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 export VMS_DIR
 
 # Source libraries
