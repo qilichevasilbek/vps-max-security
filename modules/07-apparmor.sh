@@ -1,11 +1,24 @@
 #!/bin/bash
 # Module 07: AppArmor enforcement
 
+# Parse `aa-status` summary lines to extract the count for a given mode.
+# `aa-status` always emits a line like "N profiles are in <mode> mode."
+# regardless of whether N is zero, so the previous `grep -c 'complain'`
+# check always matched the descriptive line and reported failure even on a
+# fully-enforced system. We extract the leading number instead.
+_vms_aa_count() {
+    local mode="$1"
+    aa-status 2>/dev/null \
+        | awk -v m="${mode}" '$0 ~ ("^[0-9]+ profiles are in " m " mode\\.") {print $1; exit}'
+}
+
 check_apparmor() {
-    dpkg -s apparmor-utils &>/dev/null && \
-    aa-status &>/dev/null && \
-    [[ "$(aa-status 2>/dev/null | grep -c 'enforce')" -gt 0 ]] && \
-    [[ "$(aa-status 2>/dev/null | grep -c 'complain')" -eq 0 ]]
+    dpkg -s apparmor-utils &>/dev/null || return 1
+    aa-status &>/dev/null || return 1
+    local enforce_n complain_n
+    enforce_n="$(_vms_aa_count enforce)"
+    complain_n="$(_vms_aa_count complain)"
+    [[ "${enforce_n:-0}" -gt 0 ]] && [[ "${complain_n:-1}" -eq 0 ]]
 }
 
 apply_apparmor() {
@@ -19,7 +32,9 @@ apply_apparmor() {
 }
 
 audit_apparmor() {
-    aa-status &>/dev/null && \
-    [[ "$(aa-status 2>/dev/null | grep -c 'enforce')" -gt 0 ]] && \
-    [[ "$(aa-status 2>/dev/null | grep -c 'complain')" -eq 0 ]]
+    aa-status &>/dev/null || return 1
+    local enforce_n complain_n
+    enforce_n="$(_vms_aa_count enforce)"
+    complain_n="$(_vms_aa_count complain)"
+    [[ "${enforce_n:-0}" -gt 0 ]] && [[ "${complain_n:-1}" -eq 0 ]]
 }
