@@ -15,20 +15,30 @@ check_ssh_hardening() {
 # unknown algorithms in KexAlgorithms / Ciphers / MACs (it does NOT silently
 # drop them, contrary to a common assumption), so the hardened template
 # must be reduced to the local intersection before sshd -t is run.
+#
+# Defensive: every external command is `|| true`-guarded so that `set -e`
+# at the top of vps-max-security can never make this function exit early
+# and leave a half-filtered config in place.
 _vms_filter_ssh_algos() {
     local conf="$1" directive="$2" query="$3"
-    local supported current filtered algo
+    local supported="" current="" filtered="" algo=""
 
-    supported="$(sshd -Q "${query}" 2>/dev/null)"
-    [[ -z "${supported}" ]] && return 0
+    # `sshd -Q` for unrecognized query types returns non-zero; under set -e
+    # an unguarded substitution would abort the function. `|| true` makes
+    # the assignment unconditional and the absent-list case turns into an
+    # empty `supported`, which we handle below.
+    supported="$(sshd -Q "${query}" 2>/dev/null || true)"
+    if [[ -z "${supported}" ]]; then
+        log_warn "${directive}: \`sshd -Q ${query}\` returned nothing — cannot validate, leaving as-is"
+        return 0
+    fi
 
-    current="$(grep -E "^${directive} " "${conf}" 2>/dev/null | head -1 | sed "s/^${directive} //")"
+    current="$(grep -E "^${directive} " "${conf}" 2>/dev/null | head -1 | sed "s/^${directive} //" || true)"
     [[ -z "${current}" ]] && return 0
 
-    filtered=""
-    IFS=',' read -ra _algos <<< "${current}"
+    IFS=',' read -ra _algos <<< "${current}" || true
     for algo in "${_algos[@]}"; do
-        if printf '%s\n' "${supported}" | grep -qFx "${algo}"; then
+        if printf '%s\n' "${supported}" | grep -qFx "${algo}" 2>/dev/null; then
             filtered+="${algo},"
         fi
     done
@@ -49,18 +59,20 @@ apply_ssh_hardening() {
     backup_file "/etc/ssh/sshd_config"
     backup_file "/etc/ssh/sshd_config.d/hardening.conf"
 
-    # Detect OpenSSH version. mlkem768x25519-sha256 (default PQ KEX) requires 9.9+.
-    # The hardening template will be filtered below against `sshd -Q` so older
-    # OpenSSH (e.g., 9.6 on Ubuntu 24.04 base) still applies a valid subset.
-    local ssh_ver
-    ssh_ver="$(sshd -V 2>&1 | grep -oE 'OpenSSH_[0-9]+\.[0-9]+' | head -1 | sed 's/OpenSSH_//')"
+    # Detect OpenSSH version so we can opt into ML-KEM only when supported.
+    # The base template ships *without* mlkem768x25519-sha256 because OpenSSH
+    # 9.6 (Ubuntu 24.04 base) rejects the entire KexAlgorithms line on any
+    # unknown entry. We prepend it below if sshd is 9.9+.
+    local ssh_ver="" ssh_major=0 ssh_minor=0 ssh_pq_capable="false"
+    ssh_ver="$(sshd -V 2>&1 | grep -oE 'OpenSSH_[0-9]+\.[0-9]+' | head -1 | sed 's/OpenSSH_//' || true)"
     if [[ -n "${ssh_ver}" ]]; then
-        local ssh_major ssh_minor
         ssh_major="${ssh_ver%%.*}"
         ssh_minor="${ssh_ver##*.}"
-        if (( ssh_major < 9 || (ssh_major == 9 && ssh_minor < 9) )); then
-            log_warn "OpenSSH ${ssh_ver} detected — post-quantum mlkem768x25519-sha256 requires 9.9+."
-            log_warn "Config will still apply; for full PQ protection install from ppa:openssh/ppa or noble-backports."
+        if (( ssh_major > 9 || (ssh_major == 9 && ssh_minor >= 9) )); then
+            ssh_pq_capable="true"
+        else
+            log_warn "OpenSSH ${ssh_ver} detected — ML-KEM PQ KEX requires 9.9+."
+            log_warn "Falling back to NTRU Prime hybrid (sntrup761x25519). For full PQ install from noble-backports or ppa:openssh/ppa."
         fi
     fi
 
@@ -116,13 +128,15 @@ SSHEOF
     log_step "Applying cryptographic hardening..."
     cp "${VMS_DIR}/configs/sshd_hardening.conf" /etc/ssh/sshd_config.d/hardening.conf
 
-    log_step "Filtering algorithms to those supported by local sshd..."
+    if [[ "${ssh_pq_capable}" == "true" ]]; then
+        log_step "OpenSSH ${ssh_ver} supports ML-KEM — prepending mlkem768x25519-sha256 to KexAlgorithms"
+        sed -i 's|^KexAlgorithms |KexAlgorithms mlkem768x25519-sha256,|' /etc/ssh/sshd_config.d/hardening.conf
+    fi
+
+    log_step "Filtering algorithms to those supported by local sshd (safety net)..."
     _vms_filter_ssh_algos /etc/ssh/sshd_config.d/hardening.conf KexAlgorithms kex
     _vms_filter_ssh_algos /etc/ssh/sshd_config.d/hardening.conf Ciphers cipher
     _vms_filter_ssh_algos /etc/ssh/sshd_config.d/hardening.conf MACs mac
-    _vms_filter_ssh_algos /etc/ssh/sshd_config.d/hardening.conf HostKeyAlgorithms HostKeyAlgorithms
-    _vms_filter_ssh_algos /etc/ssh/sshd_config.d/hardening.conf PubkeyAcceptedAlgorithms PubkeyAcceptedAlgorithms
-    _vms_filter_ssh_algos /etc/ssh/sshd_config.d/hardening.conf CASignatureAlgorithms CASignatureAlgorithms
 
     log_step "Removing weak DH moduli..."
     if [[ -f /etc/ssh/moduli ]]; then
